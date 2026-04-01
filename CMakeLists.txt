@@ -89,6 +89,14 @@ include(cmake/HandlePython.cmake)           # Python options and commands
 include(cmake/HandleTBB.cmake)              # TBB
 include(cmake/HandleUninstall.cmake)        # for "make uninstall"
 
+############### CUDA cuSPARSE solver #################################
+option(GTSAM_WITH_CUSPARSE "Enable GPU sparse Cholesky solver via cusolverSp" OFF)
+if(GTSAM_WITH_CUSPARSE)
+  find_package(CUDAToolkit REQUIRED)
+  message(STATUS "GTSAM: cuSPARSE solver enabled (CUDA ${CUDAToolkit_VERSION})")
+endif()
+######################################################################
+
 include(cmake/HandleAllocators.cmake)       # Must be after tbb, pertools
 
 include(cmake/HandleGlobalBuildFlags.cmake) # Build flags

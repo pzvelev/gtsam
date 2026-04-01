@@ -27,6 +27,11 @@
 
 #include <gtsam/inference/Ordering.h>
 
+#ifdef GTSAM_WITH_CUSPARSE
+#include <gtsam/linear/CuSparseSolver.h>
+#include <gtsam/linear/Scatter.h>
+#endif
+
 #include <stdexcept>
 #include <iostream>
 #include <iomanip>
@@ -170,6 +175,14 @@ VectorValues NonlinearOptimizer::solve(const GaussianFactorGraph& gfg,
       throw std::runtime_error(
           "NonlinearOptimizer::solve: special cg parameter type is not handled in LM solver ...");
     }
+#ifdef GTSAM_WITH_CUSPARSE
+  } else if (params.isCholmod()) {
+    Ordering ordering = params.ordering
+        ? *params.ordering
+        : Ordering::Colamd(gfg);
+    Scatter scatter(gfg, ordering);
+    delta = cuSparseSolve(gfg, ordering, scatter);
+#endif
   } else {
     throw std::runtime_error("NonlinearOptimizer::solve: Optimization parameter is invalid");
   }

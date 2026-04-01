@@ -64,6 +64,14 @@ if(NOT GTSAM_USE_BOOST_FEATURES)
         "${CMAKE_CURRENT_SOURCE_DIR}/inference/graph-inl.h"
     )
 endif()
+
+# Exclude cuSPARSE solver when CUDA is not enabled
+if(NOT GTSAM_WITH_CUSPARSE)
+    list (APPEND excluded_sources
+        "${CMAKE_CURRENT_SOURCE_DIR}/linear/CuSparseSolver.cpp"
+        "${CMAKE_CURRENT_SOURCE_DIR}/linear/CuSparseSolver.h"
+    )
+endif()
  
 # Common headers
 file(GLOB gtsam_core_headers "*.h")
@@ -159,6 +167,12 @@ endif()
 
 if (GTSAM_ENABLE_GPERFTOOLS AND GPERFTOOLS_FOUND)
   target_link_libraries(gtsam PRIVATE ${GPERFTOOLS_TCMALLOC} ${GPERFTOOLS_PROFILER})
+endif()
+
+# cuSPARSE GPU solver
+if(GTSAM_WITH_CUSPARSE)
+  target_link_libraries(gtsam PRIVATE CUDA::cusolver CUDA::cusparse CUDA::cudart)
+  target_compile_definitions(gtsam PRIVATE GTSAM_WITH_CUSPARSE)
 endif()
 
 # Add includes for source directories 'BEFORE' boost and any system include

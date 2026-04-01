@@ -97,6 +97,9 @@
 
 #cmakedefine GTSAM_SLOW_BUT_CORRECT_EXPMAP
 
+// GPU sparse Cholesky solver via cusolverSp
+#cmakedefine GTSAM_WITH_CUSPARSE
+
 // Boost flags
 #cmakedefine01 GTSAM_ENABLE_BOOST_SERIALIZATION
 #cmakedefine01 GTSAM_USE_BOOST_FEATURES
