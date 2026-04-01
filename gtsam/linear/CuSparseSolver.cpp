@@ -118,10 +118,12 @@ VectorValues CuSparseSolver::solve(const GaussianFactorGraph& gfg,
   checkCuda(cudaMallocManaged(&d_csrColInd, sizeof(int) * aNnz), "malloc csrColInd");
   checkCuda(cudaMallocManaged(&d_csrVal, sizeof(double) * aNnz), "malloc csrVal");
 
-  // Get buffer size for CSC→CSR conversion
+  // Convert CSC(A) [m×n] → CSR(A) [m×n] on GPU.
+  // cusparseCsr2cscEx2 converts CSR→CSC. We feed it CSC(A) as if it were
+  // CSR(A^T) [n×m], and it outputs CSC(A^T) [n×m] = CSR(A) [m×n].
   size_t convBufSize = 0;
   checkCusparse(cusparseCsr2cscEx2_bufferSize(cusparseH_,
-      m, n, aNnz,
+      n, m, aNnz,
       d_cscVal, d_cscColPtr, d_cscRowIdx,
       d_csrVal, d_csrRowPtr, d_csrColInd,
       CUDA_R_64F, CUSPARSE_ACTION_NUMERIC,
@@ -131,11 +133,8 @@ VectorValues CuSparseSolver::solve(const GaussianFactorGraph& gfg,
   void* convBuf = nullptr;
   if (convBufSize > 0) checkCuda(cudaMallocManaged(&convBuf, convBufSize), "malloc convBuf");
 
-  // CSC(A) [m×n] → CSR(A) [m×n]
-  // cusparseCsr2cscEx2 treats input as CSR and outputs CSC.
-  // To go CSC→CSR, we swap: input is "CSR" of A^T (n×m), output is "CSC" of A^T = CSR of A.
   checkCusparse(cusparseCsr2cscEx2(cusparseH_,
-      m, n, aNnz,
+      n, m, aNnz,
       d_cscVal, d_cscColPtr, d_cscRowIdx,
       d_csrVal, d_csrRowPtr, d_csrColInd,
       CUDA_R_64F, CUSPARSE_ACTION_NUMERIC,
