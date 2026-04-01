@@ -63,33 +63,34 @@ void CuSparseSolver::freeAtA() {
 VectorValues CuSparseSolver::solve(const GaussianFactorGraph& gfg,
                                     const Ordering& ordering,
                                     const Scatter& scatter) {
-  // Get augmented sparse Jacobian [A | b] as Eigen sparse matrix (CSC format)
+  // Get augmented sparse Jacobian [A | b] as Eigen CSC sparse matrix
   SparseEigen Ab = sparseJacobianEigen(gfg, ordering);
   Ab.makeCompressed();
 
   const int64_t m = Ab.rows();
-  const int64_t n_aug = Ab.cols();
-  const int64_t n = n_aug - 1;
-
-  // Copy Jacobian CSC data into managed memory
-  // Eigen CSC: outerIndexPtr[n_aug+1], innerIndexPtr[nnz], valuePtr[nnz]
+  const int64_t n = Ab.cols() - 1;
   const int64_t jacNnz = Ab.nonZeros();
 
-  int* d_jacOuterPtr = nullptr;
-  int* d_jacInnerIdx = nullptr;
-  double* d_jacValues = nullptr;
+  // Copy Jacobian CSC arrays into managed memory
+  int* d_cscColPtr = nullptr;
+  int* d_cscRowIdx = nullptr;
+  double* d_cscVal = nullptr;
 
-  checkCuda(cudaMallocManaged(&d_jacOuterPtr, sizeof(int) * (n_aug + 1)), "malloc jacOuter");
-  checkCuda(cudaMallocManaged(&d_jacInnerIdx, sizeof(int) * jacNnz), "malloc jacInner");
-  checkCuda(cudaMallocManaged(&d_jacValues, sizeof(double) * jacNnz), "malloc jacValues");
+  checkCuda(cudaMallocManaged(&d_cscColPtr, sizeof(int) * (Ab.cols() + 1)), "malloc cscColPtr");
+  checkCuda(cudaMallocManaged(&d_cscRowIdx, sizeof(int) * jacNnz), "malloc cscRowIdx");
+  checkCuda(cudaMallocManaged(&d_cscVal, sizeof(double) * jacNnz), "malloc cscVal");
 
-  std::memcpy(d_jacOuterPtr, Ab.outerIndexPtr(), sizeof(int) * (n_aug + 1));
-  std::memcpy(d_jacInnerIdx, Ab.innerIndexPtr(), sizeof(int) * jacNnz);
-  std::memcpy(d_jacValues, Ab.valuePtr(), sizeof(double) * jacNnz);
+  std::memcpy(d_cscColPtr, Ab.outerIndexPtr(), sizeof(int) * (Ab.cols() + 1));
+  std::memcpy(d_cscRowIdx, Ab.innerIndexPtr(), sizeof(int) * jacNnz);
+  std::memcpy(d_cscVal, Ab.valuePtr(), sizeof(double) * jacNnz);
 
-  // Compute A'b on CPU (sparse column dot — cheap, just column n of Ab transposed)
-  // This is A' * b where b is the last column of Ab.
-  // Much cheaper than A'A, so keep on CPU.
+  // A is the first n columns of Ab. In CSC:
+  //   colPtr = d_cscColPtr[0..n]  (n+1 entries)
+  //   nnz(A) = d_cscColPtr[n]
+  cudaDeviceSynchronize();
+  int64_t aNnz = d_cscColPtr[n];
+
+  // Compute A'b on CPU (cheap — sparse column dot product)
   Eigen::VectorXd Atb_cpu(n);
   {
     SparseEigen A_part = Ab.leftCols(n);
@@ -107,40 +108,66 @@ VectorValues CuSparseSolver::solve(const GaussianFactorGraph& gfg,
   }
   std::memcpy(rhs_, Atb_cpu.data(), sizeof(double) * n);
 
-  // Create CSC descriptor for the full augmented Jacobian [A|b] (m x n_aug)
-  cusparseSpMatDescr_t matAb = nullptr;
-  checkCusparse(cusparseCreateCsc(&matAb, m, n_aug, jacNnz,
-      d_jacOuterPtr, d_jacInnerIdx, d_jacValues,
-      CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I,
-      CUSPARSE_INDEX_BASE_ZERO, CUDA_R_64F), "createCsc Ab");
+  // Convert A from CSC to CSR on GPU using cusparseCsr2cscEx2
+  // (CSC→CSR is the same as CSR→CSC with transposed dimensions)
+  int* d_csrRowPtr = nullptr;
+  int* d_csrColInd = nullptr;
+  double* d_csrVal = nullptr;
 
-  // Create CSC descriptor for just A (m x n) — same arrays, just n columns
-  // CSC format: first n+1 entries of outerPtr define the A portion
-  cusparseSpMatDescr_t matA = nullptr;
-  int64_t aNnz = d_jacOuterPtr[n]; // nnz in first n columns
-  checkCusparse(cusparseCreateCsc(&matA, m, n, aNnz,
-      d_jacOuterPtr, d_jacInnerIdx, d_jacValues,
-      CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I,
-      CUSPARSE_INDEX_BASE_ZERO, CUDA_R_64F), "createCsc A");
+  checkCuda(cudaMallocManaged(&d_csrRowPtr, sizeof(int) * (m + 1)), "malloc csrRowPtr");
+  checkCuda(cudaMallocManaged(&d_csrColInd, sizeof(int) * aNnz), "malloc csrColInd");
+  checkCuda(cudaMallocManaged(&d_csrVal, sizeof(double) * aNnz), "malloc csrVal");
 
-  // We need A^T (n x m) for SpGEMM: C = A^T * A
-  // CSC(A) with dims (m,n) interpreted as CSR = A^T (n x m) in CSR format.
-  // So create a CSR descriptor with rows=n, cols=m using the same CSC arrays.
+  // Get buffer size for CSC→CSR conversion
+  size_t convBufSize = 0;
+  checkCusparse(cusparseCsr2cscEx2_bufferSize(cusparseH_,
+      m, n, aNnz,
+      d_cscVal, d_cscColPtr, d_cscRowIdx,
+      d_csrVal, d_csrRowPtr, d_csrColInd,
+      CUDA_R_64F, CUSPARSE_ACTION_NUMERIC,
+      CUSPARSE_INDEX_BASE_ZERO, CUSPARSE_CSR2CSC_ALG1,
+      &convBufSize), "csr2csc bufsize");
+
+  void* convBuf = nullptr;
+  if (convBufSize > 0) checkCuda(cudaMallocManaged(&convBuf, convBufSize), "malloc convBuf");
+
+  // CSC(A) [m×n] → CSR(A) [m×n]
+  // cusparseCsr2cscEx2 treats input as CSR and outputs CSC.
+  // To go CSC→CSR, we swap: input is "CSR" of A^T (n×m), output is "CSC" of A^T = CSR of A.
+  checkCusparse(cusparseCsr2cscEx2(cusparseH_,
+      m, n, aNnz,
+      d_cscVal, d_cscColPtr, d_cscRowIdx,
+      d_csrVal, d_csrRowPtr, d_csrColInd,
+      CUDA_R_64F, CUSPARSE_ACTION_NUMERIC,
+      CUSPARSE_INDEX_BASE_ZERO, CUSPARSE_CSR2CSC_ALG1,
+      convBuf), "csc2csr convert");
+
+  if (convBuf) { cudaFree(convBuf); convBuf = nullptr; }
+
+  // Now we have:
+  //   CSR(A^T) [n×m]: reinterpret CSC(A) arrays as CSR → colPtr=rowPtr, rowIdx=colInd
+  //   CSR(A)   [m×n]: from the conversion above
+  // SpGEMM: C = A^T * A (both in CSR)
+
   cusparseSpMatDescr_t matAt = nullptr;
   checkCusparse(cusparseCreateCsr(&matAt, n, m, aNnz,
-      d_jacOuterPtr, d_jacInnerIdx, d_jacValues,
+      d_cscColPtr, d_cscRowIdx, d_cscVal,  // CSC(A) reinterpreted as CSR(A^T)
       CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I,
       CUSPARSE_INDEX_BASE_ZERO, CUDA_R_64F), "createCsr At");
 
-  // Create empty CSR descriptor for result C = A^T * A (n x n)
-  // Also interpreted as CSR for cuSPARSE, which cusolverSp can consume directly
+  cusparseSpMatDescr_t matA = nullptr;
+  checkCusparse(cusparseCreateCsr(&matA, m, n, aNnz,
+      d_csrRowPtr, d_csrColInd, d_csrVal,  // Converted CSR(A)
+      CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I,
+      CUSPARSE_INDEX_BASE_ZERO, CUDA_R_64F), "createCsr A");
+
   cusparseSpMatDescr_t matC = nullptr;
   checkCusparse(cusparseCreateCsr(&matC, n, n, 0,
       nullptr, nullptr, nullptr,
       CUSPARSE_INDEX_32I, CUSPARSE_INDEX_32I,
       CUSPARSE_INDEX_BASE_ZERO, CUDA_R_64F), "createCsr C");
 
-  // SpGEMM: C = alpha * A^T * A + beta * C
+  // SpGEMM: C = A^T * A
   double alpha = 1.0, beta = 0.0;
   cusparseSpGEMMDescr_t spgemmDesc = nullptr;
   checkCusparse(cusparseSpGEMM_createDescr(&spgemmDesc), "SpGEMM createDescr");
@@ -179,11 +206,10 @@ VectorValues CuSparseSolver::solve(const GaussianFactorGraph& gfg,
       CUDA_R_64F, CUSPARSE_SPGEMM_DEFAULT,
       spgemmDesc, &bufSize2, buf2), "SpGEMM compute");
 
-  // Phase 3: get result dimensions and copy
+  // Phase 3: extract result
   int64_t cRows, cCols, cNnz;
   checkCusparse(cusparseSpMatGetSize(matC, &cRows, &cCols, &cNnz), "SpMatGetSize");
 
-  // Allocate result arrays for A'A
   freeAtA();
   ataNnz_ = cNnz;
   checkCuda(cudaMallocManaged(&ataRowPtr_, sizeof(int) * (n + 1)), "malloc ataRowPtr");
@@ -203,20 +229,20 @@ VectorValues CuSparseSolver::solve(const GaussianFactorGraph& gfg,
   // Cleanup SpGEMM temporaries
   cusparseSpGEMM_destroyDescr(spgemmDesc);
   cusparseDestroySpMat(matC);
-  cusparseDestroySpMat(matAt);
   cusparseDestroySpMat(matA);
-  cusparseDestroySpMat(matAb);
+  cusparseDestroySpMat(matAt);
   if (buf2) cudaFree(buf2);
   if (buf1) cudaFree(buf1);
-  cudaFree(d_jacValues);
-  cudaFree(d_jacInnerIdx);
-  cudaFree(d_jacOuterPtr);
+  cudaFree(d_csrVal);
+  cudaFree(d_csrColInd);
+  cudaFree(d_csrRowPtr);
+  cudaFree(d_cscVal);
+  cudaFree(d_cscRowIdx);
+  cudaFree(d_cscColPtr);
 
   // Cholesky solve: A'A * x = A'b
-  // ataRowPtr_/ataColInd_/ataVal_ is CSR format (full matrix, not just triangle)
-  // cusolverSpDcsrlsvchol reads lower triangle of CSR input
-  cudaDeviceSynchronize();
-
+  // ataRowPtr_/ataColInd_/ataVal_ is full CSR (A'A is SPD)
+  // cusolverSpDcsrlsvchol reads the lower triangle
   int singularity = 0;
   checkCusolver(
       cusolverSpDcsrlsvchol(
@@ -231,10 +257,8 @@ VectorValues CuSparseSolver::solve(const GaussianFactorGraph& gfg,
     throw std::runtime_error("CuSparseSolver: matrix is singular at row " +
                              std::to_string(singularity));
 
-  // Construct VectorValues from solution
   Eigen::Map<Eigen::VectorXd> x_vec(sol_, n);
   Eigen::VectorXd solution(x_vec);
-
   return VectorValues(solution, scatter);
 }
 
