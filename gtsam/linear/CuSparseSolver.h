@@ -21,6 +21,7 @@
 #include <cusparse.h>
 
 #include <memory>
+#include <vector>
 
 namespace gtsam {
 
@@ -53,6 +54,17 @@ class GTSAM_EXPORT CuSparseSolver {
   double* rhs_ = nullptr;
   double* sol_ = nullptr;
   int allocRhsN_ = 0;
+
+  // AMD permutation + permuted system buffers
+  int* d_perm_ = nullptr;
+  int* d_permInv_ = nullptr;
+  int allocPermN_ = 0;
+
+  int* permAtaRowPtr_ = nullptr;
+  int* permAtaColInd_ = nullptr;
+  double* permAtaVal_ = nullptr;
+  int64_t permAtaNnz_ = 0;
+  double* permRhs_ = nullptr;
 };
 
 VectorValues cuSparseSolve(const GaussianFactorGraph& gfg,
