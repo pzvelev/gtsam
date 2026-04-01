@@ -350,7 +350,7 @@ VectorValues CuSparseSolver::solve(const GaussianFactorGraph& gfg,
     allocPermN_ = n;
   }
   std::memcpy(d_perm_, permMat.indices().data(), sizeof(int) * n);
-  auto permInvMat = permMat.inverse();
+  Eigen::PermutationMatrix<Eigen::Dynamic, Eigen::Dynamic, int> permInvMat(permMat.inverse());
   std::memcpy(d_permInv_, permInvMat.indices().data(), sizeof(int) * n);
 
   // === Apply permutation: P * A'A * P^T and P * A'b ===
