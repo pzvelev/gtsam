@@ -16,6 +16,7 @@
  * @date Jul 17, 2010
  */
 
+#include <gtsam/config.h>
 #include <gtsam/nonlinear/NonlinearOptimizer.h>
 #include <gtsam/nonlinear/internal/NonlinearOptimizerState.h>
 #include <gtsam/linear/GaussianEliminationTree.h>

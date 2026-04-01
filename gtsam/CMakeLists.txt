@@ -172,7 +172,6 @@ endif()
 # cuSPARSE GPU solver
 if(GTSAM_WITH_CUSPARSE)
   target_link_libraries(gtsam PRIVATE CUDA::cusolver CUDA::cusparse CUDA::cudart)
-  target_compile_definitions(gtsam PRIVATE GTSAM_WITH_CUSPARSE)
 endif()
 
 # Add includes for source directories 'BEFORE' boost and any system include
