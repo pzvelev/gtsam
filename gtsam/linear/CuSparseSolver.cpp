@@ -11,6 +11,8 @@
 
 #include <cuda_runtime.h>
 
+#include <chrono>
+#include <cstdio>
 #include <cstring>
 #include <memory>
 #include <stdexcept>
@@ -63,8 +65,13 @@ void CuSparseSolver::freeAtA() {
 VectorValues CuSparseSolver::solve(const GaussianFactorGraph& gfg,
                                     const Ordering& ordering,
                                     const Scatter& scatter) {
+  using Clock = std::chrono::high_resolution_clock;
+  auto t0 = Clock::now();
+
   SparseEigen Ab = sparseJacobianEigen(gfg, ordering);
   Ab.makeCompressed();
+
+  auto t1 = Clock::now();
 
   const int64_t m = Ab.rows();
   const int64_t n = Ab.cols() - 1;
@@ -85,6 +92,8 @@ VectorValues CuSparseSolver::solve(const GaussianFactorGraph& gfg,
 
   cudaDeviceSynchronize();
   int64_t aNnz = d_cscColPtr[n];
+
+  auto t2 = Clock::now();
 
   // Allocate RHS/solution
   if (n > allocRhsN_) {
@@ -135,6 +144,8 @@ VectorValues CuSparseSolver::solve(const GaussianFactorGraph& gfg,
   cusparseDestroySpMat(matAt_mv);
   if (mvBuf) cudaFree(mvBuf);
   cudaFree(d_bVec);
+
+  auto t3 = Clock::now();
 
   // === A'A via cuSPARSE SpGEMM ===
   // Convert CSC(A) to CSR(A) on GPU
@@ -254,6 +265,8 @@ VectorValues CuSparseSolver::solve(const GaussianFactorGraph& gfg,
   cudaFree(d_cscRowIdx);
   cudaFree(d_cscColPtr);
 
+  auto t4 = Clock::now();
+
   // === Cholesky solve (cusolverSp does internal reordering) ===
   int singularity = 0;
   checkCusolver(
@@ -269,8 +282,21 @@ VectorValues CuSparseSolver::solve(const GaussianFactorGraph& gfg,
     throw std::runtime_error("CuSparseSolver: matrix is singular at row " +
                              std::to_string(singularity));
 
+  auto t5 = Clock::now();
+
   Eigen::Map<Eigen::VectorXd> x_vec(sol_, n);
   Eigen::VectorXd solution(x_vec);
+
+  auto t6 = Clock::now();
+
+  auto ms = [](auto a, auto b) { return std::chrono::duration<double, std::milli>(b - a).count(); };
+  static int callCount = 0;
+  if (callCount++ % 5 == 0) {
+    std::fprintf(stderr,
+        "[CuSparseSolver] jacobian=%.2f memcpy=%.2f SpMV=%.2f SpGEMM+csc2csr=%.2f cholesky=%.2f result=%.2f TOTAL=%.2f ms\n",
+        ms(t0, t1), ms(t1, t2), ms(t2, t3), ms(t3, t4), ms(t4, t5), ms(t5, t6), ms(t0, t6));
+  }
+
   return VectorValues(solution, scatter);
 }
 
