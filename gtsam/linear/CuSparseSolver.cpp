@@ -11,6 +11,7 @@
 
 #include <cuda_runtime.h>
 
+#include <memory>
 #include <stdexcept>
 
 namespace gtsam {
@@ -140,13 +141,13 @@ VectorValues CuSparseSolver::solve(const GaussianFactorGraph& gfg,
   return VectorValues(solution, scatter);
 }
 
-// Thread-local solver instance for reuse across optimizer iterations
-static thread_local CuSparseSolver tlsSolver;
-
 VectorValues cuSparseSolve(const GaussianFactorGraph& gfg,
                            const Ordering& ordering,
                            const Scatter& scatter) {
-  return tlsSolver.solve(gfg, ordering, scatter);
+  // Lazy init — avoids CUDA context issues at static init time
+  static thread_local std::unique_ptr<CuSparseSolver> solver;
+  if (!solver) solver = std::make_unique<CuSparseSolver>();
+  return solver->solve(gfg, ordering, scatter);
 }
 
 }  // namespace gtsam
