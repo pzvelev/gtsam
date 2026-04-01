@@ -14,6 +14,14 @@ if (NOT GTSAM_USE_BOOST_FEATURES)
       )
 endif()
 
+if(NOT GTSAM_WITH_CUSPARSE)
+  list(APPEND excluded_scripts "timeCuSparseSolver.cpp")
+endif()
+
 gtsamAddTimingGlob("*.cpp" "${excluded_scripts}" "gtsam" ${GTSAM_BUILD_TIMING_ALWAYS})
 
 target_link_libraries(timeGaussianFactorGraph CppUnitLite)
+
+if(GTSAM_WITH_CUSPARSE)
+  target_link_libraries(timeCuSparseSolver CUDA::cusolver CUDA::cusparse CUDA::cudart)
+endif()
