@@ -19,7 +19,7 @@
 #include <gtsam/nonlinear/NonlinearFactorGraph.h>
 #include <gtsam/nonlinear/Values.h>
 #include <gtsam/slam/BetweenFactor.h>
-#include <gtsam/slam/PriorFactors.h>
+#include <gtsam/slam/PriorFactor.h>
 
 #ifdef GTSAM_WITH_CUSPARSE
 #include <gtsam/linear/CuSparseSolver.h>
