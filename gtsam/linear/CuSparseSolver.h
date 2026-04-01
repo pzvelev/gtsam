@@ -18,7 +18,7 @@
 #include <Eigen/OrderingMethods>
 
 #include <cusolverSp.h>
-#include <cusparse_v2.h>
+#include <cusparse.h>
 
 #include <memory>
 
@@ -37,24 +37,22 @@ class GTSAM_EXPORT CuSparseSolver {
                      const Scatter& scatter);
 
  private:
-  void allocate(int n, int nnz);
-  void free();
+  void freeAtA();
 
+  cusparseHandle_t cusparseH_ = nullptr;
   cusolverSpHandle_t cusolverH_ = nullptr;
-  cusparseMatDescr_t descrA_ = nullptr;
+  cusparseMatDescr_t descrAtA_ = nullptr;
 
-  // Unified memory buffers (Jetson zero-copy)
-  int* csrRowPtr_ = nullptr;
-  int* csrColInd_ = nullptr;
-  double* csrVal_ = nullptr;
-  double* b_ = nullptr;
-  double* x_ = nullptr;
+  // A'A result buffers (GPU managed memory)
+  int* ataRowPtr_ = nullptr;
+  int* ataColInd_ = nullptr;
+  double* ataVal_ = nullptr;
+  int64_t ataNnz_ = 0;
 
-  int allocN_ = 0;
-  int allocNnz_ = 0;
-
-  Eigen::PermutationMatrix<Eigen::Dynamic, Eigen::Dynamic, int> perm_;
-  Eigen::PermutationMatrix<Eigen::Dynamic, Eigen::Dynamic, int> permInv_;
+  // RHS and solution buffers
+  double* rhs_ = nullptr;
+  double* sol_ = nullptr;
+  int allocRhsN_ = 0;
 };
 
 VectorValues cuSparseSolve(const GaussianFactorGraph& gfg,
