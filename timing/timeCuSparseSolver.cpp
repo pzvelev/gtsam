@@ -156,7 +156,7 @@ int main(int argc, char* argv[]) {
       auto end = chrono::high_resolution_clock::now();
       totalMs += chrono::duration<double, milli>(end - start).count();
     }
-    cout << "CPU linear solve: " << totalMs / numTrials << " ms (dim=" << delta.dim() << ")" << endl;
+    cout << "CPU linear solve: " << totalMs / numTrials << " ms (dim=" << delta.size() << ")" << endl;
   }
 
 #ifdef GTSAM_WITH_CUSPARSE
@@ -171,7 +171,7 @@ int main(int argc, char* argv[]) {
       auto end = chrono::high_resolution_clock::now();
       totalMs += chrono::duration<double, milli>(end - start).count();
     }
-    cout << "GPU linear solve: " << totalMs / numTrials << " ms (dim=" << delta.dim() << ")" << endl;
+    cout << "GPU linear solve: " << totalMs / numTrials << " ms (dim=" << delta.size() << ")" << endl;
   }
 #endif
 
