@@ -27,10 +27,12 @@ if(GTSAM_WITH_CUSPARSE)
 endif()
 
 if(GTSAM_WITH_BASPACHO)
-  target_include_directories(timeCuSparseSolver PRIVATE ${BASPACHO_ROOT}/baspacho)
+  target_include_directories(timeCuSparseSolver PRIVATE
+    ${BASPACHO_ROOT}
+    ${BASPACHO_ROOT}/build/_deps/dispenso-src
+    ${BASPACHO_ROOT}/build/_deps/eigen-src)
   target_link_libraries(timeCuSparseSolver
     ${BASPACHO_ROOT}/build/baspacho/baspacho/libBaSpaCho_static.a
     ${BASPACHO_ROOT}/build/_deps/dispenso-build/dispenso/libdispenso.a
     pthread)
-  target_compile_definitions(timeCuSparseSolver PRIVATE GTSAM_WITH_BASPACHO)
 endif()
