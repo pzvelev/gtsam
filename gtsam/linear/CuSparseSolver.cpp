@@ -9,7 +9,13 @@
 #include <gtsam/linear/CuSparseSolver.h>
 #include <gtsam/linear/SparseEigen.h>
 
+#include <cudss.h>
 #include <cuda_runtime.h>
+
+// Cast void* members to cuDSS types
+#define CUDSS_H static_cast<cudssHandle_t>(cudssH_)
+#define CUDSS_CFG static_cast<cudssConfig_t>(cudssConfig_)
+#define CUDSS_DATA static_cast<cudssData_t>(cudssData_)
 
 #include <chrono>
 #include <cstdio>
@@ -40,18 +46,18 @@ void checkCudss(cudssStatus_t s, const char* msg) {
 
 CuSparseSolver::CuSparseSolver() {
   checkCusparse(cusparseCreate(&cusparseH_), "cusparseCreate");
-  checkCudss(cudssCreate(&cudssH_), "cudssCreate");
-  checkCudss(cudssConfigCreate(&cudssConfig_), "cudssConfigCreate");
-  checkCudss(cudssDataCreate(cudssH_, &cudssData_), "cudssDataCreate");
+  cudssHandle_t h; checkCudss(cudssCreate(&h), "cudssCreate"); cudssH_ = h;
+  cudssConfig_t c; checkCudss(cudssConfigCreate(&c), "cudssConfigCreate"); cudssConfig_ = c;
+  cudssData_t d; checkCudss(cudssDataCreate(h, &d), "cudssDataCreate"); cudssData_ = d;
 }
 
 CuSparseSolver::~CuSparseSolver() {
   freeAtA();
   if (rhs_) cudaFree(rhs_);
   if (sol_) cudaFree(sol_);
-  if (cudssData_) cudssDataDestroy(cudssH_, cudssData_);
-  if (cudssConfig_) cudssConfigDestroy(cudssConfig_);
-  if (cudssH_) cudssDestroy(cudssH_);
+  if (cudssData_) cudssDataDestroy(CUDSS_H, CUDSS_DATA);
+  if (cudssConfig_) cudssConfigDestroy(CUDSS_CFG);
+  if (cudssH_) cudssDestroy(CUDSS_H);
   if (cusparseH_) cusparseDestroy(cusparseH_);
 }
 
@@ -265,9 +271,8 @@ VectorValues CuSparseSolver::solve(const GaussianFactorGraph& gfg,
   auto t4 = Clock::now();
 
   // === Cholesky solve via cuDSS ===
-  // Recreate cuDSS data for each solve (structure may change)
-  cudssDataDestroy(cudssH_, cudssData_);
-  cudssDataCreate(cudssH_, &cudssData_);
+  cudssDataDestroy(CUDSS_H, CUDSS_DATA);
+  { cudssData_t d; cudssDataCreate(CUDSS_H, &d); cudssData_ = d; }
 
   cudssMatrix_t cudssAtA = nullptr;
   checkCudss(cudssMatrixCreateCsr(&cudssAtA, n, n, ataNnz_,
@@ -284,13 +289,13 @@ VectorValues CuSparseSolver::solve(const GaussianFactorGraph& gfg,
   checkCudss(cudssMatrixCreateDn(&cudssSol, n, 1, n, sol_,
       CUDA_R_64F, CUDSS_LAYOUT_COL_MAJOR), "cudssMatrixCreateDn sol");
 
-  checkCudss(cudssExecute(cudssH_, CUDSS_PHASE_ANALYSIS, cudssConfig_, cudssData_,
+  checkCudss(cudssExecute(CUDSS_H, CUDSS_PHASE_ANALYSIS, CUDSS_CFG, CUDSS_DATA,
       cudssAtA, cudssSol, cudssRhs), "cudss analysis");
 
-  checkCudss(cudssExecute(cudssH_, CUDSS_PHASE_FACTORIZATION, cudssConfig_, cudssData_,
+  checkCudss(cudssExecute(CUDSS_H, CUDSS_PHASE_FACTORIZATION, CUDSS_CFG, CUDSS_DATA,
       cudssAtA, cudssSol, cudssRhs), "cudss factorization");
 
-  checkCudss(cudssExecute(cudssH_, CUDSS_PHASE_SOLVE, cudssConfig_, cudssData_,
+  checkCudss(cudssExecute(CUDSS_H, CUDSS_PHASE_SOLVE, CUDSS_CFG, CUDSS_DATA,
       cudssAtA, cudssSol, cudssRhs), "cudss solve");
 
   cudaDeviceSynchronize();

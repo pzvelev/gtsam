@@ -16,7 +16,6 @@
 
 #include <Eigen/Sparse>
 
-#include <cudss.h>
 #include <cusparse.h>
 
 #include <memory>
@@ -40,10 +39,10 @@ class GTSAM_EXPORT CuSparseSolver {
 
   cusparseHandle_t cusparseH_ = nullptr;
 
-  // cuDSS solver state
-  cudssHandle_t cudssH_ = nullptr;
-  cudssConfig_t cudssConfig_ = nullptr;
-  cudssData_t cudssData_ = nullptr;
+  // cuDSS solver state (opaque pointers)
+  void* cudssH_ = nullptr;
+  void* cudssConfig_ = nullptr;
+  void* cudssData_ = nullptr;
 
   // A'A result buffers
   int* ataRowPtr_ = nullptr;
