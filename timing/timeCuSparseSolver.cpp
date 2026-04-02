@@ -211,9 +211,11 @@ int main(int argc, char* argv[]) {
     }
 
     // Create solver (CPU)
+    BaSpaCho::Settings bsSettings;
+    bsSettings.numThreads = 1;
+    bsSettings.backend = BaSpaCho::BackendFast;
     auto solverCPU = BaSpaCho::createSolver(
-        {.numThreads = 1, .backend = BaSpaCho::BackendFast},
-        paramSizes, BaSpaCho::SparseStructure(ptrs, inds));
+        bsSettings, paramSizes, BaSpaCho::SparseStructure(ptrs, inds));
 
     // Fill baspacho data from dense Hessian blocks
     auto acc = solverCPU->accessor();
