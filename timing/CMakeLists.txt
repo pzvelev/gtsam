@@ -31,8 +31,12 @@ if(GTSAM_WITH_BASPACHO)
     ${BASPACHO_ROOT}
     ${BASPACHO_ROOT}/build/_deps/dispenso-src
     ${BASPACHO_ROOT}/build/_deps/eigen-src)
+  find_package(CUDAToolkit QUIET)
   target_link_libraries(timeCuSparseSolver
     ${BASPACHO_ROOT}/build/baspacho/baspacho/libBaSpaCho_static.a
     ${BASPACHO_ROOT}/build/_deps/dispenso-build/dispenso/libdispenso.a
     pthread)
+  if(CUDAToolkit_FOUND)
+    target_link_libraries(timeCuSparseSolver CUDA::cusolver CUDA::cublas CUDA::cudart)
+  endif()
 endif()
