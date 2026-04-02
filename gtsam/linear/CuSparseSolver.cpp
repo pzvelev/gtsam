@@ -278,7 +278,7 @@ VectorValues CuSparseSolver::solve(const GaussianFactorGraph& gfg,
   checkCudss(cudssMatrixCreateCsr(&cudssAtA, n, n, ataNnz_,
       ataRowPtr_, nullptr, ataColInd_, ataVal_,
       CUDA_R_32I, CUDA_R_64F,
-      CUDSS_MTYPE_SPD, CUDSS_MVIEW_FULL, CUDSS_BASE_ZERO),
+      CUDSS_MTYPE_SPD, CUDSS_MVIEW_UPPER, CUDSS_BASE_ZERO),
       "cudssMatrixCreateCsr");
 
   cudssMatrix_t cudssRhs = nullptr;
@@ -289,16 +289,22 @@ VectorValues CuSparseSolver::solve(const GaussianFactorGraph& gfg,
   checkCudss(cudssMatrixCreateDn(&cudssSol, n, 1, n, sol_,
       CUDA_R_64F, CUDSS_LAYOUT_COL_MAJOR), "cudssMatrixCreateDn sol");
 
+  auto t4a = Clock::now();
   checkCudss(cudssExecute(CUDSS_H, CUDSS_PHASE_ANALYSIS, CUDSS_CFG, CUDSS_DATA,
       cudssAtA, cudssSol, cudssRhs), "cudss analysis");
+  cudaDeviceSynchronize();
 
+  auto t4b = Clock::now();
   checkCudss(cudssExecute(CUDSS_H, CUDSS_PHASE_FACTORIZATION, CUDSS_CFG, CUDSS_DATA,
       cudssAtA, cudssSol, cudssRhs), "cudss factorization");
+  cudaDeviceSynchronize();
 
+  auto t4c = Clock::now();
   checkCudss(cudssExecute(CUDSS_H, CUDSS_PHASE_SOLVE, CUDSS_CFG, CUDSS_DATA,
       cudssAtA, cudssSol, cudssRhs), "cudss solve");
-
   cudaDeviceSynchronize();
+
+  auto t4d = Clock::now();
 
   cudssMatrixDestroy(cudssSol);
   cudssMatrixDestroy(cudssRhs);
@@ -315,8 +321,10 @@ VectorValues CuSparseSolver::solve(const GaussianFactorGraph& gfg,
   static int callCount = 0;
   if (callCount++ % 5 == 0) {
     std::fprintf(stderr,
-        "[CuDSS] jacobian=%.2f memcpy=%.2f SpMV=%.2f SpGEMM=%.2f cholesky=%.2f result=%.2f TOTAL=%.2f ms\n",
-        ms(t0, t1), ms(t1, t2), ms(t2, t3), ms(t3, t4), ms(t4, t5), ms(t5, t6), ms(t0, t6));
+        "[CuDSS] jac=%.2f mem=%.2f SpMV=%.2f SpGEMM=%.2f setup=%.2f analysis=%.2f factor=%.2f solve=%.2f res=%.2f TOT=%.2f ms\n",
+        ms(t0, t1), ms(t1, t2), ms(t2, t3), ms(t3, t4),
+        ms(t4, t4a), ms(t4a, t4b), ms(t4b, t4c), ms(t4c, t4d),
+        ms(t5, t6), ms(t0, t6));
   }
 
   return VectorValues(solution, scatter);
