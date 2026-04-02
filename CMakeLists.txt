@@ -97,6 +97,18 @@ if(GTSAM_WITH_CUSPARSE)
 endif()
 ######################################################################
 
+############### BaSpaCho supernodal Cholesky solver ##################
+option(GTSAM_WITH_BASPACHO "Enable BaSpaCho supernodal Cholesky solver" OFF)
+set(BASPACHO_ROOT "" CACHE PATH "Path to BaSpaCho source root")
+if(GTSAM_WITH_BASPACHO)
+  if(BASPACHO_ROOT)
+    message(STATUS "GTSAM: BaSpaCho enabled from ${BASPACHO_ROOT}")
+  else()
+    message(FATAL_ERROR "GTSAM_WITH_BASPACHO=ON requires BASPACHO_ROOT to be set")
+  endif()
+endif()
+######################################################################
+
 include(cmake/HandleAllocators.cmake)       # Must be after tbb, pertools
 
 include(cmake/HandleGlobalBuildFlags.cmake) # Build flags

@@ -14,7 +14,7 @@ if (NOT GTSAM_USE_BOOST_FEATURES)
       )
 endif()
 
-if(NOT GTSAM_WITH_CUSPARSE)
+if(NOT GTSAM_WITH_CUSPARSE AND NOT GTSAM_WITH_BASPACHO)
   list(APPEND excluded_scripts "timeCuSparseSolver.cpp")
 endif()
 
@@ -24,4 +24,13 @@ target_link_libraries(timeGaussianFactorGraph CppUnitLite)
 
 if(GTSAM_WITH_CUSPARSE)
   target_link_libraries(timeCuSparseSolver CUDA::cusolver CUDA::cusparse CUDA::cudart)
+endif()
+
+if(GTSAM_WITH_BASPACHO)
+  target_include_directories(timeCuSparseSolver PRIVATE ${BASPACHO_ROOT}/baspacho)
+  target_link_libraries(timeCuSparseSolver
+    ${BASPACHO_ROOT}/build/baspacho/baspacho/libBaSpaCho_static.a
+    ${BASPACHO_ROOT}/build/_deps/dispenso-build/dispenso/libdispenso.a
+    pthread)
+  target_compile_definitions(timeCuSparseSolver PRIVATE GTSAM_WITH_BASPACHO)
 endif()

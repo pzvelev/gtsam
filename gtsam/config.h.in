@@ -100,6 +100,9 @@
 // GPU sparse Cholesky solver via cusolverSp
 #cmakedefine GTSAM_WITH_CUSPARSE
 
+// BaSpaCho supernodal Cholesky solver
+#cmakedefine GTSAM_WITH_BASPACHO
+
 // Boost flags
 #cmakedefine01 GTSAM_ENABLE_BOOST_SERIALIZATION
 #cmakedefine01 GTSAM_USE_BOOST_FEATURES
