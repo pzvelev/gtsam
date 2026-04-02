@@ -31,27 +31,27 @@ void checkCusparse(cusparseStatus_t s, const char* msg) {
     throw std::runtime_error(std::string(msg) + ": cusparse error " + std::to_string(s));
 }
 
-void checkCusolver(cusolverStatus_t s, const char* msg) {
-  if (s != CUSOLVER_STATUS_SUCCESS)
-    throw std::runtime_error(std::string(msg) + ": cusolver error " + std::to_string(s));
+void checkCudss(cudssStatus_t s, const char* msg) {
+  if (s != CUDSS_STATUS_SUCCESS)
+    throw std::runtime_error(std::string(msg) + ": cudss error " + std::to_string(s));
 }
 
 }  // namespace
 
 CuSparseSolver::CuSparseSolver() {
   checkCusparse(cusparseCreate(&cusparseH_), "cusparseCreate");
-  checkCusolver(cusolverSpCreate(&cusolverH_), "cusolverSpCreate");
-  checkCusparse(cusparseCreateMatDescr(&descrAtA_), "cusparseCreateMatDescr");
-  cusparseSetMatType(descrAtA_, CUSPARSE_MATRIX_TYPE_GENERAL);
-  cusparseSetMatIndexBase(descrAtA_, CUSPARSE_INDEX_BASE_ZERO);
+  checkCudss(cudssCreate(&cudssH_), "cudssCreate");
+  checkCudss(cudssConfigCreate(&cudssConfig_), "cudssConfigCreate");
+  checkCudss(cudssDataCreate(cudssH_, &cudssData_), "cudssDataCreate");
 }
 
 CuSparseSolver::~CuSparseSolver() {
   freeAtA();
   if (rhs_) cudaFree(rhs_);
   if (sol_) cudaFree(sol_);
-  if (descrAtA_) cusparseDestroyMatDescr(descrAtA_);
-  if (cusolverH_) cusolverSpDestroy(cusolverH_);
+  if (cudssData_) cudssDataDestroy(cudssH_, cudssData_);
+  if (cudssConfig_) cudssConfigDestroy(cudssConfig_);
+  if (cudssH_) cudssDestroy(cudssH_);
   if (cusparseH_) cusparseDestroy(cusparseH_);
 }
 
@@ -71,11 +71,11 @@ VectorValues CuSparseSolver::solve(const GaussianFactorGraph& gfg,
   SparseEigen Ab = sparseJacobianEigen(gfg, ordering);
   Ab.makeCompressed();
 
-  auto t1 = Clock::now();
-
   const int64_t m = Ab.rows();
   const int64_t n = Ab.cols() - 1;
   const int64_t jacNnz = Ab.nonZeros();
+
+  auto t1 = Clock::now();
 
   // Copy Jacobian CSC into managed memory
   int* d_cscColPtr = nullptr;
@@ -93,8 +93,6 @@ VectorValues CuSparseSolver::solve(const GaussianFactorGraph& gfg,
   cudaDeviceSynchronize();
   int64_t aNnz = d_cscColPtr[n];
 
-  auto t2 = Clock::now();
-
   // Allocate RHS/solution
   if (n > allocRhsN_) {
     if (rhs_) cudaFree(rhs_);
@@ -104,8 +102,9 @@ VectorValues CuSparseSolver::solve(const GaussianFactorGraph& gfg,
     allocRhsN_ = n;
   }
 
+  auto t2 = Clock::now();
+
   // === A'b via cusparseSpMV on GPU ===
-  // CSC(A) reinterpreted as CSR(A^T) [n x m], multiply by b [m x 1]
   double* d_bVec = nullptr;
   checkCuda(cudaMallocManaged(&d_bVec, sizeof(double) * m), "malloc bVec");
   cudaMemset(d_bVec, 0, sizeof(double) * m);
@@ -148,7 +147,6 @@ VectorValues CuSparseSolver::solve(const GaussianFactorGraph& gfg,
   auto t3 = Clock::now();
 
   // === A'A via cuSPARSE SpGEMM ===
-  // Convert CSC(A) to CSR(A) on GPU
   int* d_csrRowPtr = nullptr;
   int* d_csrColInd = nullptr;
   double* d_csrVal = nullptr;
@@ -179,7 +177,6 @@ VectorValues CuSparseSolver::solve(const GaussianFactorGraph& gfg,
 
   if (convBuf) cudaFree(convBuf);
 
-  // SpGEMM: C = A^T * A
   cusparseSpMatDescr_t matAt = nullptr;
   checkCusparse(cusparseCreateCsr(&matAt, n, m, aNnz,
       d_cscColPtr, d_cscRowIdx, d_cscVal,
@@ -267,20 +264,40 @@ VectorValues CuSparseSolver::solve(const GaussianFactorGraph& gfg,
 
   auto t4 = Clock::now();
 
-  // === Cholesky solve (cusolverSp does internal reordering) ===
-  int singularity = 0;
-  checkCusolver(
-      cusolverSpDcsrlsvchol(
-          cusolverH_, n, ataNnz_, descrAtA_,
-          ataVal_, ataRowPtr_, ataColInd_,
-          rhs_, 0.0, 0, sol_, &singularity),
-      "cusolverSpDcsrlsvchol");
+  // === Cholesky solve via cuDSS ===
+  // Recreate cuDSS data for each solve (structure may change)
+  cudssDataDestroy(cudssH_, cudssData_);
+  cudssDataCreate(cudssH_, &cudssData_);
+
+  cudssMatrix_t cudssAtA = nullptr;
+  checkCudss(cudssMatrixCreateCsr(&cudssAtA, n, n, ataNnz_,
+      ataRowPtr_, nullptr, ataColInd_, ataVal_,
+      CUDA_R_32I, CUDA_R_64F,
+      CUDSS_MTYPE_SPD, CUDSS_MVIEW_FULL, CUDSS_BASE_ZERO),
+      "cudssMatrixCreateCsr");
+
+  cudssMatrix_t cudssRhs = nullptr;
+  checkCudss(cudssMatrixCreateDn(&cudssRhs, n, 1, n, rhs_,
+      CUDA_R_64F, CUDSS_LAYOUT_COL_MAJOR), "cudssMatrixCreateDn rhs");
+
+  cudssMatrix_t cudssSol = nullptr;
+  checkCudss(cudssMatrixCreateDn(&cudssSol, n, 1, n, sol_,
+      CUDA_R_64F, CUDSS_LAYOUT_COL_MAJOR), "cudssMatrixCreateDn sol");
+
+  checkCudss(cudssExecute(cudssH_, CUDSS_PHASE_ANALYSIS, cudssConfig_, cudssData_,
+      cudssAtA, cudssSol, cudssRhs), "cudss analysis");
+
+  checkCudss(cudssExecute(cudssH_, CUDSS_PHASE_FACTORIZATION, cudssConfig_, cudssData_,
+      cudssAtA, cudssSol, cudssRhs), "cudss factorization");
+
+  checkCudss(cudssExecute(cudssH_, CUDSS_PHASE_SOLVE, cudssConfig_, cudssData_,
+      cudssAtA, cudssSol, cudssRhs), "cudss solve");
 
   cudaDeviceSynchronize();
 
-  if (singularity != -1)
-    throw std::runtime_error("CuSparseSolver: matrix is singular at row " +
-                             std::to_string(singularity));
+  cudssMatrixDestroy(cudssSol);
+  cudssMatrixDestroy(cudssRhs);
+  cudssMatrixDestroy(cudssAtA);
 
   auto t5 = Clock::now();
 
@@ -293,7 +310,7 @@ VectorValues CuSparseSolver::solve(const GaussianFactorGraph& gfg,
   static int callCount = 0;
   if (callCount++ % 5 == 0) {
     std::fprintf(stderr,
-        "[CuSparseSolver] jacobian=%.2f memcpy=%.2f SpMV=%.2f SpGEMM+csc2csr=%.2f cholesky=%.2f result=%.2f TOTAL=%.2f ms\n",
+        "[CuDSS] jacobian=%.2f memcpy=%.2f SpMV=%.2f SpGEMM=%.2f cholesky=%.2f result=%.2f TOTAL=%.2f ms\n",
         ms(t0, t1), ms(t1, t2), ms(t2, t3), ms(t3, t4), ms(t4, t5), ms(t5, t6), ms(t0, t6));
   }
 

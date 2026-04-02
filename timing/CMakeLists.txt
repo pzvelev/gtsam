@@ -23,7 +23,7 @@ gtsamAddTimingGlob("*.cpp" "${excluded_scripts}" "gtsam" ${GTSAM_BUILD_TIMING_AL
 target_link_libraries(timeGaussianFactorGraph CppUnitLite)
 
 if(GTSAM_WITH_CUSPARSE)
-  target_link_libraries(timeCuSparseSolver CUDA::cusolver CUDA::cusparse CUDA::cudart)
+  target_link_libraries(timeCuSparseSolver CUDA::cusparse CUDA::cudart)
 endif()
 
 if(GTSAM_WITH_BASPACHO)

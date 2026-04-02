@@ -171,7 +171,22 @@ endif()
 
 # cuSPARSE GPU solver
 if(GTSAM_WITH_CUSPARSE)
-  target_link_libraries(gtsam PRIVATE CUDA::cusolver CUDA::cusparse CUDA::cudart)
+  # cuDSS for Cholesky, cuSPARSE for SpGEMM/SpMV/format conversion
+  set(CUDSS_ROOT "" CACHE PATH "Path to cuDSS installation")
+  if(NOT CUDSS_ROOT)
+    # Auto-detect common install locations
+    file(GLOB CUDSS_CANDIDATES "/usr/local/libcudss-linux*")
+    if(CUDSS_CANDIDATES)
+      list(GET CUDSS_CANDIDATES 0 CUDSS_ROOT)
+    endif()
+  endif()
+  if(CUDSS_ROOT)
+    target_include_directories(gtsam PRIVATE ${CUDSS_ROOT}/include)
+    target_link_libraries(gtsam PRIVATE ${CUDSS_ROOT}/lib/libcudss.so)
+  else()
+    message(FATAL_ERROR "cuDSS not found. Set CUDSS_ROOT or install cuDSS.")
+  endif()
+  target_link_libraries(gtsam PRIVATE CUDA::cusparse CUDA::cudart)
 endif()
 
 # Add includes for source directories 'BEFORE' boost and any system include
