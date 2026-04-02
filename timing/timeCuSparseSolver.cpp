@@ -26,7 +26,7 @@
 #endif
 
 #ifdef GTSAM_WITH_BASPACHO
-#include <baspacho/Solver.h>
+#include <baspacho/baspacho/Solver.h>
 #include <gtsam/linear/HessianFactor.h>
 #endif
 
