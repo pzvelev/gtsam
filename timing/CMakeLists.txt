@@ -32,11 +32,15 @@ if(GTSAM_WITH_BASPACHO)
     ${BASPACHO_ROOT}/build/_deps/dispenso-src
     ${BASPACHO_ROOT}/build/_deps/eigen-src)
   find_package(CUDAToolkit QUIET)
+  find_package(BLAS QUIET)
   target_link_libraries(timeCuSparseSolver
     ${BASPACHO_ROOT}/build/baspacho/baspacho/libBaSpaCho_static.a
     ${BASPACHO_ROOT}/build/_deps/dispenso-build/dispenso/libdispenso.a
     pthread)
   if(CUDAToolkit_FOUND)
     target_link_libraries(timeCuSparseSolver CUDA::cusolver CUDA::cublas CUDA::cudart)
+  endif()
+  if(BLAS_FOUND)
+    target_link_libraries(timeCuSparseSolver ${BLAS_LIBRARIES})
   endif()
 endif()
