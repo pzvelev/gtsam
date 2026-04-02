@@ -54,6 +54,10 @@ class GTSAM_EXPORT CuSparseSolver {
   double* rhs_ = nullptr;
   double* sol_ = nullptr;
   int allocRhsN_ = 0;
+
+  // Cached analysis state
+  int64_t analysisN_ = 0;
+  int64_t analysisNnz_ = 0;
 };
 
 VectorValues cuSparseSolve(const GaussianFactorGraph& gfg,

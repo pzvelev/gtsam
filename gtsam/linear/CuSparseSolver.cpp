@@ -271,8 +271,12 @@ VectorValues CuSparseSolver::solve(const GaussianFactorGraph& gfg,
   auto t4 = Clock::now();
 
   // === Cholesky solve via cuDSS ===
-  cudssDataDestroy(CUDSS_H, CUDSS_DATA);
-  { cudssData_t d; cudssDataCreate(CUDSS_H, &d); cudssData_ = d; }
+  bool needAnalysis = (analysisN_ != n || analysisNnz_ != ataNnz_);
+
+  if (needAnalysis) {
+    cudssDataDestroy(CUDSS_H, CUDSS_DATA);
+    { cudssData_t d; cudssDataCreate(CUDSS_H, &d); cudssData_ = d; }
+  }
 
   cudssMatrix_t cudssAtA = nullptr;
   checkCudss(cudssMatrixCreateCsr(&cudssAtA, n, n, ataNnz_,
@@ -290,12 +294,17 @@ VectorValues CuSparseSolver::solve(const GaussianFactorGraph& gfg,
       CUDA_R_64F, CUDSS_LAYOUT_COL_MAJOR), "cudssMatrixCreateDn sol");
 
   auto t4a = Clock::now();
-  checkCudss(cudssExecute(CUDSS_H, CUDSS_PHASE_ANALYSIS, CUDSS_CFG, CUDSS_DATA,
-      cudssAtA, cudssSol, cudssRhs), "cudss analysis");
-  cudaDeviceSynchronize();
+  if (needAnalysis) {
+    checkCudss(cudssExecute(CUDSS_H, CUDSS_PHASE_ANALYSIS, CUDSS_CFG, CUDSS_DATA,
+        cudssAtA, cudssSol, cudssRhs), "cudss analysis");
+    cudaDeviceSynchronize();
+    analysisN_ = n;
+    analysisNnz_ = ataNnz_;
+  }
 
   auto t4b = Clock::now();
-  checkCudss(cudssExecute(CUDSS_H, CUDSS_PHASE_FACTORIZATION, CUDSS_CFG, CUDSS_DATA,
+  cudssPhase_t factPhase = needAnalysis ? CUDSS_PHASE_FACTORIZATION : CUDSS_PHASE_REFACTORIZATION;
+  checkCudss(cudssExecute(CUDSS_H, factPhase, CUDSS_CFG, CUDSS_DATA,
       cudssAtA, cudssSol, cudssRhs), "cudss factorization");
   cudaDeviceSynchronize();
 
